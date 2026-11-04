@@ -1,18 +1,34 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
+import { Stack } from 'expo-router';
+import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
-
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+import { useEffect } from 'react';
+import { colors } from '@/constants/theme';
+import { AuthProvider } from '@/context/AuthContext';
+import { StatusBar } from 'expo-status-bar';
 
 SplashScreen.preventAutoHideAsync();
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+export default function RootLayout() {
+  const [loaded] = useFonts({
+    'Nunito-Regular': require('../../assets/fonts/Nunito-Regular.ttf'),
+    'Nunito-Medium': require('../../assets/fonts/Nunito-Medium.ttf'),
+    'Nunito-SemiBold': require('../../assets/fonts/Nunito-SemiBold.ttf'),
+    'Nunito-Bold': require('../../assets/fonts/Nunito-Bold.ttf'),
+    'Lato-Regular': require('../../assets/fonts/Lato-Regular.ttf'),
+    'Lato-Bold': require('../../assets/fonts/Lato-Bold.ttf'),
+  });
+
+  useEffect(() => {
+    if (loaded) void SplashScreen.hideAsync();
+  }, [loaded]);
+
+  if (!loaded) return null;
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+    <AuthProvider>
+      <StatusBar style="light" />
+      <Stack
+        screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}
+      />
+    </AuthProvider>
   );
 }
