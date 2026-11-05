@@ -41,20 +41,3 @@ example
 # generated native folders
 /ios
 /android
-
-# secrets / local env
-.env
-.env.*
-!.env.example
-
-# logs
-bun-debug.log*
-*.log
-
-# windows / editors
-Thumbs.db
-desktop.ini
-.idea/
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json

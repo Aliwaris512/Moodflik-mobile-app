@@ -1,25 +1,26 @@
 {
   "expo": {
     "name": "Moodflik",
-    "slug": "moodflik",
+    "slug": "moodflik-expo",
     "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "moodflik",
-    "userInterfaceStyle": "automatic",
+    "orientation": "default",
+    "icon": "./assets/moodflik/app-icon.png",
+    "scheme": "moodflikexpo",
+    "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon",
+      "supportsTablet": true,
       "bundleIdentifier": "com.moodflik.app"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#6D0AC7",
+        "foregroundImage": "./assets/moodflik/app-icon.png",
+        "monochromeImage": "./assets/moodflik/app-icon.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.moodflik.app"
+      "package": "com.moodflik.app",
+      "versionCode": 1
     },
     "web": {
       "output": "server",
@@ -30,30 +31,26 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#ffffff",
-          "image": "./assets/images/logo.png",
-          "imageWidth": 200
+          "backgroundColor": "#6D0AC7",
+          "image": "./assets/moodflik/splash.png",
+          "imageWidth": 180
         }
       ],
       "expo-secure-store",
       [
-        "expo-notifications",
-        {
-          "color": "#00234b"
-        }
-      ],
-      "expo-video",
-      "expo-sharing",
-      "@react-native-community/datetimepicker",
-      "@giphy/react-native-sdk",
-      [
         "expo-image-picker",
         {
-          "cameraPermission": "Allow Moodflik to use the camera to take photos for posts.",
-          "photosPermission": "Allow Moodflik to access your photos to share posts and set your profile picture."
+          "photosPermission": "Moodflik uses your photos when you choose media for a post.",
+          "cameraPermission": "Moodflik uses your camera when you choose to capture media.",
+          "microphonePermission": false
         }
       ],
-      ["expo-notifications"]
+      [
+        "expo-notifications",
+        {
+          "color": "#1BDAB5"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
