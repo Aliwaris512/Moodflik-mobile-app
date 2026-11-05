@@ -1,10 +1,8 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "react", "react-perf", "import", "unicorn"],
+  "plugins": ["react", "typescript", "import", "unicorn"],
   "categories": { "correctness": "error", "suspicious": "warn" },
-  "env": { "browser": true, "es2022": true },
-  "rules": {
-    "react/react-in-jsx-scope": "off"
-  },
-  "ignorePatterns": ["dist/", ".expo/", "android/", "ios/", "node_modules/"]
+  "rules": { "react/react-in-jsx-scope": "off" },
+  "env": { "es2022": true },
+  "ignorePatterns": ["node_modules", ".expo", "src/api/generated", "dist"]
 }
