@@ -49,10 +49,8 @@ import {
 import { colors, fonts, layout, radius, spacing, typography } from '@/constants/theme';
 import { currentUser, posts, users } from '@/services/mockService';
 import {
-  authService,
   chatService,
   commentsService,
-  feedService,
   notificationService,
   postService,
   profileService,
@@ -61,13 +59,21 @@ import {
 } from '@/services/repositories';
 import { useAuth } from '@/context/AuthContext';
 import { useResponsive } from '@/hooks/use-responsive';
+import { requestPasswordReset } from '@/api/auth';
+import { apiMessage } from '@/api/auth/errors';
+import { useFavourites, useFeed, useMyPosts } from '@/api/posts';
+import type { PaginatedPostShowList, PostShow } from '@/api/posts/types';
+import { usePostRow } from '@/db/posts';
+import { useAppForm } from '@/lib/form';
+import { toPost } from '@/services/postMapper';
+import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query';
 import {
   validateDateOfBirth,
   validateEmail,
   validatePassword,
   validateStrongPassword,
 } from '@/utils/validation';
-import type { Comment, Message, Notification, Post, User } from '@/types/moodflik';
+import type { Comment, Message, Notification, User } from '@/types/moodflik';
 
 const authRoutes = new Set([
   'login',
@@ -270,51 +276,57 @@ function AuthHero({ title, subtitle }: { title: string; subtitle: string }) {
   );
 }
 
+const validationError = (result: ReturnType<typeof validateEmail>) =>
+  result.valid ? undefined : result.message;
+
 function Login() {
   const auth = useAuth();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const submit = async () => {
-    const emailCheck = validateEmail(email);
-    if (!emailCheck.valid) return setError(emailCheck.message);
-    const passwordCheck = validatePassword(password);
-    if (!passwordCheck.valid) return setError(passwordCheck.message);
-    try {
-      setError('');
-      setLoading(true);
-      await auth.signIn(email, password);
-      router.replace('/home');
-    } catch (reason: unknown) {
-      setError(
-        reason instanceof Error ? reason.message : 'Something went wrong. Please try again.',
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+  const form = useAppForm({
+    defaultValues: { email: '', password: '' },
+    onSubmit: async ({ value }) => {
+      try {
+        setError('');
+        await auth.signIn(value.email, value.password);
+        router.replace('/home');
+      } catch (reason: unknown) {
+        setError(
+          reason instanceof Error ? reason.message : 'Something went wrong. Please try again.',
+        );
+      }
+    },
+  });
   return (
     <Screen style={styles.authScreen}>
       <AuthHero title="Sign In" subtitle="Welcome back! See what everyone is feeling today." />
       <Card style={styles.authCard}>
-        <Input
-          value={email}
-          onChangeText={setEmail}
-          placeholder="Email address"
-          icon="mail"
-          keyboardType="email-address"
-          autoCapitalize="none"
-          autoComplete="email"
-        />
-        <Input
-          value={password}
-          onChangeText={setPassword}
-          placeholder="Password"
-          icon="lock"
-          secureToggle
-          autoComplete="password"
-        />
+        <form.AppField
+          name="email"
+          validators={{ onChange: ({ value }) => validationError(validateEmail(value)) }}
+        >
+          {(field) => (
+            <field.TextField
+              placeholder="Email address"
+              icon="mail"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoComplete="email"
+            />
+          )}
+        </form.AppField>
+        <form.AppField
+          name="password"
+          validators={{ onChange: ({ value }) => validationError(validatePassword(value)) }}
+        >
+          {(field) => (
+            <field.TextField
+              placeholder="Password"
+              icon="lock"
+              secureToggle
+              autoComplete="password"
+            />
+          )}
+        </form.AppField>
         <Pressable
           accessibilityRole="link"
           onPress={() => router.push('/forgot-password')}
@@ -323,7 +335,11 @@ function Login() {
           <Text style={styles.link}>Forgot Password?</Text>
         </Pressable>
         {!!error && <Text style={commonStyles.error}>{error}</Text>}
-        <Button label="Login" loading={loading} onPress={() => void submit()} />
+        <form.Subscribe selector={(state) => state.isSubmitting}>
+          {(loading) => (
+            <Button label="Login" loading={loading} onPress={() => void form.handleSubmit()} />
+          )}
+        </form.Subscribe>
       </Card>
       <View style={styles.orRow}>
         <Divider style={{ flex: 1 }} />
@@ -347,56 +363,34 @@ const legalLinks = [
   ['Cookie use', '/cookies'],
 ] as const;
 
+const required = ({ value }: { value: string }) => (value.trim() ? undefined : 'Required');
+
 function SignUp() {
   const auth = useAuth();
   const { compact } = useResponsive();
-  const [form, setForm] = useState({
-    firstName: '',
-    lastName: '',
-    username: '',
-    email: '',
-    password: '',
-    confirm: '',
-    dob: '',
-    gender: 'Male',
-  });
   const [agreed, setAgreed] = useState(false);
-  const [errors, setErrors] = useState<Partial<Record<keyof typeof form | 'form', string>>>({});
-  const [loading, setLoading] = useState(false);
-  const set = (key: keyof typeof form) => (value: string) =>
-    setForm((current) => ({ ...current, [key]: key === 'dob' ? formatDob(value) : value }));
-
-  const submit = async () => {
-    const next: typeof errors = {};
-    if (!form.firstName.trim()) next.firstName = 'Required';
-    if (!form.lastName.trim()) next.lastName = 'Required';
-    if (!/^[A-Za-z0-9._]{3,}$/.test(form.username))
-      next.username = 'At least 3 letters, numbers, dots or underscores.';
-    const emailCheck = validateEmail(form.email);
-    if (!emailCheck.valid) next.email = emailCheck.message;
-    const passwordCheck = validateStrongPassword(form.password);
-    if (!passwordCheck.valid) next.password = passwordCheck.message;
-    if (form.confirm !== form.password) next.confirm = 'Passwords do not match.';
-    const dobCheck = validateDateOfBirth(form.dob);
-    if (!dobCheck.valid) next.dob = dobCheck.message;
-    setErrors(next);
-    if (Object.keys(next).length) return;
-    try {
-      setLoading(true);
-      await auth.signUp(
-        form.email,
-        form.password,
-        `${form.firstName.trim()} ${form.lastName.trim()}`,
-      );
-      router.replace('/home');
-    } catch (reason: unknown) {
-      setErrors({
-        form: reason instanceof Error ? reason.message : 'Unable to create your account.',
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [formError, setFormError] = useState('');
+  const form = useAppForm({
+    defaultValues: {
+      firstName: '',
+      lastName: '',
+      username: '',
+      email: '',
+      password: '',
+      confirm: '',
+      dob: '',
+      gender: 'Male',
+    },
+    onSubmit: async ({ value }) => {
+      try {
+        setFormError('');
+        await auth.signUp(value);
+        router.replace('/home');
+      } catch (reason: unknown) {
+        setFormError(reason instanceof Error ? reason.message : 'Unable to create your account.');
+      }
+    },
+  });
 
   return (
     <Screen style={styles.authScreen}>
@@ -404,80 +398,98 @@ function SignUp() {
       <Card style={styles.authCard}>
         <View style={compact ? styles.fieldGroup : styles.twoCol}>
           <View style={{ flex: 1 }}>
-            <Input
-              value={form.firstName}
-              onChangeText={set('firstName')}
-              placeholder="First Name"
-              autoCapitalize="words"
-              error={errors.firstName}
-            />
+            <form.AppField name="firstName" validators={{ onChange: required }}>
+              {(field) => <field.TextField placeholder="First Name" autoCapitalize="words" />}
+            </form.AppField>
           </View>
           <View style={{ flex: 1 }}>
-            <Input
-              value={form.lastName}
-              onChangeText={set('lastName')}
-              placeholder="Last Name"
-              autoCapitalize="words"
-              error={errors.lastName}
-            />
+            <form.AppField name="lastName" validators={{ onChange: required }}>
+              {(field) => <field.TextField placeholder="Last Name" autoCapitalize="words" />}
+            </form.AppField>
           </View>
         </View>
-        <Input
-          value={form.username}
-          onChangeText={set('username')}
-          placeholder="Username"
-          icon="person"
-          autoCapitalize="none"
-          error={errors.username}
-        />
-        <Input
-          value={form.email}
-          onChangeText={set('email')}
-          placeholder="Email address"
-          icon="mail"
-          keyboardType="email-address"
-          autoCapitalize="none"
-          error={errors.email}
-        />
-        <Input
-          value={form.password}
-          onChangeText={set('password')}
-          placeholder="Password"
-          icon="lock"
-          secureToggle
-          error={errors.password}
-          hint="6–16 characters including small and capital letters, number(s) and special characters."
-        />
-        <Input
-          value={form.confirm}
-          onChangeText={set('confirm')}
-          placeholder="Confirm Password"
-          icon="lock"
-          secureToggle
-          error={errors.confirm}
-        />
-        <Input
-          value={form.dob}
-          onChangeText={set('dob')}
-          placeholder="Date of Birth (DD/MM/YYYY)"
-          rightIcon="calendar"
-          keyboardType="number-pad"
-          maxLength={10}
-          error={errors.dob}
-          hint="You must be aged 13 or over to sign up!"
-        />
+        <form.AppField
+          name="username"
+          validators={{
+            onChange: ({ value }) =>
+              /^[A-Za-z0-9._]{3,}$/.test(value)
+                ? undefined
+                : 'At least 3 letters, numbers, dots or underscores.',
+          }}
+        >
+          {(field) => (
+            <field.TextField placeholder="Username" icon="person" autoCapitalize="none" />
+          )}
+        </form.AppField>
+        <form.AppField
+          name="email"
+          validators={{ onChange: ({ value }) => validationError(validateEmail(value)) }}
+        >
+          {(field) => (
+            <field.TextField
+              placeholder="Email address"
+              icon="mail"
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          )}
+        </form.AppField>
+        <form.AppField
+          name="password"
+          validators={{ onChange: ({ value }) => validationError(validateStrongPassword(value)) }}
+        >
+          {(field) => (
+            <field.TextField
+              placeholder="Password"
+              icon="lock"
+              secureToggle
+              hint="6–16 characters including small and capital letters, number(s) and special characters."
+            />
+          )}
+        </form.AppField>
+        <form.AppField
+          name="confirm"
+          validators={{
+            onChangeListenTo: ['password'],
+            onChange: ({ value, fieldApi }) =>
+              value === fieldApi.form.getFieldValue('password')
+                ? undefined
+                : 'Passwords do not match.',
+          }}
+        >
+          {(field) => <field.TextField placeholder="Confirm Password" icon="lock" secureToggle />}
+        </form.AppField>
+        <form.AppField
+          name="dob"
+          validators={{ onChange: ({ value }) => validationError(validateDateOfBirth(value)) }}
+        >
+          {(field) => (
+            <field.TextField
+              placeholder="Date of Birth (DD/MM/YYYY)"
+              rightIcon="calendar"
+              keyboardType="number-pad"
+              maxLength={10}
+              format={formatDob}
+              hint="You must be aged 13 or over to sign up!"
+            />
+          )}
+        </form.AppField>
         <View style={styles.fieldGroup}>
           <Text style={styles.fieldLabel}>Gender</Text>
-          <View style={styles.chipRow}>
-            {['Male', 'Female', 'Other', 'Prefer not to say'].map((gender) => (
-              <Chip
-                key={gender}
-                label={gender}
-                selected={form.gender === gender}
-                onPress={() => set('gender')(gender)}
-              />
-            ))}
-          </View>
+          <form.Subscribe selector={(state) => state.values.gender}>
+            {(selected) => (
+              <View style={styles.chipRow}>
+                {['Male', 'Female', 'Other', 'Prefer not to say'].map((gender) => (
+                  <Chip
+                    key={gender}
+                    label={gender}
+                    selected={selected === gender}
+                    onPress={() => form.setFieldValue('gender', gender)}
+                  />
+                ))}
+              </View>
+            )}
+          </form.Subscribe>
         </View>
         <Divider />
         <Checkbox checked={agreed} onChange={setAgreed}>
@@ -497,13 +509,17 @@ function SignUp() {
             ))}
           </Text>
         </Checkbox>
-        {!!errors.form && <Text style={commonStyles.error}>{errors.form}</Text>}
-        <Button
-          label="Agree & Create Account"
-          disabled={!agreed}
-          loading={loading}
-          onPress={() => void submit()}
-        />
+        {!!formError && <Text style={commonStyles.error}>{formError}</Text>}
+        <form.Subscribe selector={(state) => state.isSubmitting}>
+          {(loading) => (
+            <Button
+              label="Agree & Create Account"
+              disabled={!agreed}
+              loading={loading}
+              onPress={() => void form.handleSubmit()}
+            />
+          )}
+        </form.Subscribe>
       </Card>
       <Pressable accessibilityRole="link" onPress={() => router.push('/login')}>
         <Text style={styles.centerText}>
@@ -596,12 +612,10 @@ function AuthForm({ mode }: { mode: AuthMode }) {
       if (mode === 'otp-validation' && password.length !== 6)
         throw new Error('Enter the 6-digit code.');
       if (mode === 'profile-setup' && !name.trim()) throw new Error('Please enter your name.');
-      if (mode === 'forgot-password') await authService.requestPasswordReset(email);
+      if (mode === 'forgot-password') await requestPasswordReset(email);
       router.replace(mode === 'profile-setup' ? '/home' : '/login');
     } catch (reason: unknown) {
-      setError(
-        reason instanceof Error ? reason.message : 'Something went wrong. Please try again.',
-      );
+      setError(apiMessage(reason, 'Something went wrong. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -677,54 +691,95 @@ function ComposerPrompt() {
   );
 }
 
-function Feed({ kind = 'home' }: { kind?: 'home' | 'favourites' | 'my-posts' }) {
-  const [list, setList] = useState<Post[]>([]);
-  const [side, setSide] = useState<MoodSide>('love');
-  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [refreshing, setRefreshing] = useState(false);
-  const load = useCallback(
-    async (refresh = false) => {
-      try {
-        if (refresh) setRefreshing(true);
-        else setState('loading');
-        const result = await feedService.list();
-        setList(
-          kind === 'favourites'
-            ? result.items.filter((post) => post.favourite)
-            : kind === 'my-posts'
-              ? result.items.filter((post) => post.author.id === currentUser.id)
-              : result.items,
-        );
-        setState('ready');
-      } catch (reason: unknown) {
-        console.error('Unable to load feed', reason);
-        setState('error');
-      } finally {
-        setRefreshing(false);
-      }
-    },
-    [kind],
-  );
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      void load();
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [load]);
+type FeedKind = 'home' | 'favourites' | 'my-posts';
+type FeedQuery = UseInfiniteQueryResult<InfiniteData<PaginatedPostShowList, number>, Error>;
 
+const flatten = (query: FeedQuery) => query.data?.pages.flatMap((page) => page.results) ?? [];
+
+function Feed({ kind = 'home' }: { kind?: FeedKind }) {
+  if (kind === 'favourites') return <FavouritesFeed />;
+  if (kind === 'my-posts') return <MyPostsFeed />;
+  return <HomeFeed />;
+}
+
+function HomeFeed() {
+  return <FeedView kind="home" love={useFeed('like')} dislike={useFeed('dislike')} />;
+}
+
+function FavouritesFeed() {
+  return (
+    <FeedView kind="favourites" love={useFavourites('like')} dislike={useFavourites('dislike')} />
+  );
+}
+
+function MyPostsFeed() {
+  return <FeedView kind="my-posts" love={useMyPosts('like')} dislike={useMyPosts('dislike')} />;
+}
+
+/** One post, read live from the TanStack DB collection so reactions update everywhere. */
+function FeedItem({ post }: { post: PostShow }) {
+  const row = usePostRow(post.uuid, post) ?? post;
+  return (
+    <PostCard post={toPost(row)} onComment={() => router.push(`/comments?postId=${post.uuid}`)} />
+  );
+}
+
+function FeedView({
+  kind,
+  love,
+  dislike,
+}: {
+  kind: FeedKind;
+  love: FeedQuery;
+  dislike: FeedQuery;
+}) {
+  const [side, setSide] = useState<MoodSide>('love');
+  const [refreshing, setRefreshing] = useState(false);
   const r = useResponsive();
+
+  const loveItems = flatten(love);
+  const dislikeItems = flatten(dislike);
+  const state =
+    love.isPending || dislike.isPending
+      ? 'loading'
+      : love.isError || dislike.isError
+        ? 'error'
+        : 'ready';
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([love.refetch(), dislike.refetch()]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const visible =
     kind === 'home'
-      ? list.filter((post) => (side === 'dislike') === isDislikeMood(post.mood))
-      : list;
-  const loveCount = list.filter((post) => !isDislikeMood(post.mood)).length;
-  const lovePercent = list.length ? Math.round((loveCount / list.length) * 100) : 50;
+      ? side === 'dislike'
+        ? dislikeItems
+        : loveItems
+      : [...loveItems, ...dislikeItems].toSorted((a, b) =>
+          b.created_at.localeCompare(a.created_at),
+        );
+  const total = loveItems.length + dislikeItems.length;
+  const lovePercent = total ? Math.round((loveItems.length / total) * 100) : 50;
+  const pager =
+    kind === 'home'
+      ? side === 'dislike'
+        ? dislike
+        : love
+      : love.hasNextPage
+        ? love
+        : dislike.hasNextPage
+          ? dislike
+          : undefined;
 
   return (
     <Shell title={titles[kind]} active={kind === 'my-posts' ? undefined : kind}>
       <Screen
         refreshing={refreshing}
-        onRefresh={() => void load(true)}
+        onRefresh={() => void refresh()}
         style={r.sideColumn && styles.wideContent}
       >
         <Columns
@@ -764,16 +819,22 @@ function Feed({ kind = 'home' }: { kind?: 'home' | 'favourites' | 'my-posts' }) 
               ) : state === 'error' ? (
                 <>
                   <StateView type="error" message="We could not load moods." />
-                  <Button label="Try again" onPress={() => void load()} />
+                  <Button label="Try again" onPress={() => void refresh()} />
                 </>
               ) : visible.length ? (
-                visible.map((post) => (
-                  <PostCard
-                    key={post.id}
-                    post={post}
-                    onComment={() => router.push(`/comments?postId=${post.id}`)}
-                  />
-                ))
+                <>
+                  {visible.map((post) => (
+                    <FeedItem key={post.uuid} post={post} />
+                  ))}
+                  {pager?.hasNextPage && (
+                    <Button
+                      label="Load more"
+                      variant="outline"
+                      loading={pager.isFetchingNextPage}
+                      onPress={() => void pager.fetchNextPage()}
+                    />
+                  )}
+                </>
               ) : (
                 <StateView
                   type="empty"
