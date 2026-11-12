@@ -11,15 +11,23 @@ export type AuthState = {
   session: AuthSession | null;
 };
 
+export type FollowStatus = 'pending' | 'approved' | 'rejected' | null;
+
 export type User = {
   id: string;
   username: string;
   displayName: string;
+  firstName?: string;
+  lastName?: string;
   bio: string;
   avatar?: number;
+  photoUrl?: string;
+  coverUrl?: string;
   followers: number;
   following: number;
   isFollowing?: boolean;
+  followRequest?: FollowStatus;
+  isActivated?: boolean;
   location?: string;
   threeWords?: string;
   loves?: string;
@@ -29,6 +37,12 @@ export type User = {
 export type Post = {
   id: string;
   author: User;
+  /** Which side of Moodflik the post lives on. */
+  type?: 'like' | 'dislike';
+  mine?: boolean;
+  askWhy?: boolean;
+  whyLikes?: number;
+  whyDislikes?: number;
   mood: string;
   content: string;
   why?: string;
@@ -58,11 +72,24 @@ export type Thread = {
   createdAt: string;
 };
 
-export type NotificationKind = 'reaction' | 'follow' | 'follow-request' | 'comment' | 'favourite';
+export type NotificationKind =
+  | 'reaction'
+  | 'follow'
+  | 'follow-request'
+  | 'comment'
+  | 'favourite'
+  | 'message'
+  | 'message-request'
+  | 'mention'
+  | 'thread'
+  | 'post';
 
 export type Notification = {
   id: string;
   kind?: NotificationKind;
+  postId?: string;
+  requestId?: string;
+  roomId?: string;
   actor?: User;
   title: string;
   body: string;
@@ -76,7 +103,25 @@ export type Message = {
   senderId: string;
   body: string;
   createdAt: string;
+  sentAt?: number;
   mediaUri?: string;
+};
+
+export type AskThread = {
+  id: string;
+  postId: string;
+  question: string;
+  author: User;
+  answers: number;
+  createdAt: string;
+};
+
+export type MessageRequest = {
+  id: string;
+  roomId: string;
+  sender: User;
+  message: string;
+  createdAt: string;
 };
 
 export type Conversation = {

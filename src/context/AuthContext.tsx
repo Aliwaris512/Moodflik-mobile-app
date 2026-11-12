@@ -1,148 +1,183 @@
 import React, {
   createContext,
   PropsWithChildren,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
-import { login, signUp as registerAccount } from '@/api/auth';
-import { apiMessage, fieldErrors } from '@/api/auth/errors';
-import { pendingLogin } from '@/api/auth/pending';
-import { setSignedOutHandler } from '@/api/client';
-import { queryClient } from '@/lib/query';
-import { tokens } from '@/lib/secure';
+import type { AuthSession, AuthState, User } from '@/types/moodflik';
+import { setAuthToken, setUnauthorizedHandler } from '@/services/api';
+import {
+  authService,
+  profileService,
+  setCurrentUserId,
+  type SignUpInput,
+} from '@/services/repositories';
+import { openSocket } from '@/services/realtime';
 import { clearSession, readSession, writeSession } from '@/services/storage';
-import type { AuthSession, AuthState } from '@/types/moodflik';
 
-export type SignUpFields = {
-  firstName: string;
-  lastName: string;
-  username: string;
-  email: string;
-  password: string;
-  /** DD/MM/YYYY, as typed in the form. */
-  dob: string;
-  gender: string;
-};
+type Counts = { notifications: number; messages: number };
 
 type AuthContextValue = AuthState & {
+  /** The signed-in user's profile (a placeholder built from the session until it loads). */
+  user: User | null;
+  counts: Counts;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (fields: SignUpFields) => Promise<void>;
+  signUp: (input: SignUpInput) => Promise<void>;
   signOut: () => Promise<void>;
+  refreshUser: () => Promise<void>;
+  refreshCounts: () => Promise<void>;
+  setCounts: (next: Partial<Counts>) => void;
   error: string | null;
   clearError: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const GENDERS: Record<string, 'M' | 'F' | 'NA'> = { Male: 'M', Female: 'F' };
+const placeholderUser = (session: AuthSession): User => ({
+  id: session.userId,
+  username: session.email.split('@')[0],
+  displayName: session.email.split('@')[0],
+  bio: '',
+  followers: 0,
+  following: 0,
+});
 
-function toIsoDate(dob: string) {
-  const [day = '', month = '', year = ''] = dob.split('/');
-  return `${year}-${month}-${day}`;
-}
-
-/** Logs in, keeps the JWTs in the secure store and returns the session to show in the app. */
-async function openSession(email: string, password: string): Promise<AuthSession> {
-  const result = await login({ email, password });
-  if (result.deactivated) {
-    pendingLogin.set({ token: result.accessToken, uuid: result.uuid });
-    throw new Error('Your account is deactivated. Please reactivate it to continue.');
-  }
-  await tokens.set(result.accessToken, result.refreshToken);
-  const session: AuthSession = {
-    accessToken: result.accessToken,
-    userId: result.uuid,
-    email: result.email,
-  };
-  await writeSession(session);
-  return session;
-}
+const COUNT_POLL_MS = 30000;
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<AuthState['status']>('loading');
   const [session, setSession] = useState<AuthSession | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [counts, setCountsState] = useState<Counts>({ notifications: 0, messages: 0 });
   const [error, setError] = useState<string | null>(null);
+  const sessionRef = useRef<AuthSession | null>(null);
+
+  const activate = useCallback(async (next: AuthSession) => {
+    setAuthToken(next.accessToken);
+    setCurrentUserId(next.userId);
+    sessionRef.current = next;
+    setSession(next);
+    setUser(placeholderUser(next));
+    setStatus('signedIn');
+    try {
+      setUser(await profileService.getUser(next.userId));
+    } catch (reason: unknown) {
+      console.error('Unable to load the signed-in profile', reason);
+    }
+  }, []);
+
+  const signOut = useCallback(async () => {
+    setAuthToken(null);
+    setCurrentUserId(null);
+    sessionRef.current = null;
+    setSession(null);
+    setUser(null);
+    setCountsState({ notifications: 0, messages: 0 });
+    setStatus('signedOut');
+    try {
+      await clearSession();
+    } catch (reason: unknown) {
+      console.error('Unable to clear the stored session', reason);
+    }
+  }, []);
 
   useEffect(() => {
-    // The API client calls this when a token refresh fails.
-    setSignedOutHandler(() => {
-      void clearSession().catch(() => undefined);
-      setSession(null);
-      setStatus('signedOut');
+    // An expired or revoked token on any request signs the user out.
+    setUnauthorizedHandler(() => {
+      if (sessionRef.current) {
+        setError('Your session has expired. Please sign in again.');
+        void signOut();
+      }
     });
-    Promise.all([readSession(), tokens.getAccess()])
-      .then(([stored, access]) => {
-        if (stored && access) {
-          setSession({ ...stored, accessToken: access });
-          setStatus('signedIn');
-        } else {
-          setStatus('signedOut');
-        }
+    return () => setUnauthorizedHandler(null);
+  }, [signOut]);
+
+  useEffect(() => {
+    readSession()
+      .then((stored) => {
+        if (stored) void activate(stored);
+        else setStatus('signedOut');
       })
       .catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : 'We could not restore your session.');
         setStatus('signedOut');
       });
+  }, [activate]);
+
+  const refreshCounts = useCallback(async () => {
+    const current = sessionRef.current;
+    if (!current) return;
+    try {
+      setCountsState(await profileService.counts(current.userId));
+    } catch (reason: unknown) {
+      console.error('Unable to refresh badge counts', reason);
+    }
   }, []);
+
+  // Keep header badges fresh: poll, and refresh immediately when the server pushes a notification.
+  useEffect(() => {
+    if (status !== 'signedIn' || !session) return;
+    void refreshCounts();
+    const timer = setInterval(() => void refreshCounts(), COUNT_POLL_MS);
+    const socket = openSocket(
+      `/ws/notification-server/${session.userId}/`,
+      (data) => {
+        if (data.type === 'notification') void refreshCounts();
+      },
+      { reconnect: true },
+    );
+    return () => {
+      clearInterval(timer);
+      socket.close();
+    };
+  }, [status, session, refreshCounts]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
       session,
+      user,
+      counts,
       error,
       clearError: () => setError(null),
+      setCounts: (next) => setCountsState((current) => ({ ...current, ...next })),
+      refreshCounts,
+      refreshUser: async () => {
+        const current = sessionRef.current;
+        if (current) setUser(await profileService.getUser(current.userId));
+      },
       signIn: async (email, password) => {
         try {
           setError(null);
-          const next = await openSession(email, password);
-          setSession(next);
-          setStatus('signedIn');
+          const next = await authService.signIn(email, password);
+          await writeSession(next);
+          await activate(next);
         } catch (reason: unknown) {
-          const message = apiMessage(reason, 'Unable to sign in right now.');
+          const message = reason instanceof Error ? reason.message : 'Unable to sign in right now.';
           setError(message);
           throw new Error(message, { cause: reason });
         }
       },
-      signUp: async (fields) => {
+      signUp: async (input) => {
         try {
           setError(null);
-          await registerAccount({
-            first_name: fields.firstName.trim(),
-            last_name: fields.lastName.trim(),
-            username: fields.username,
-            email: fields.email,
-            password: fields.password,
-            date_of_birth: toIsoDate(fields.dob),
-            gender: GENDERS[fields.gender] ?? 'NA',
-            terms_confirmed: 1,
-          });
-          const next = await openSession(fields.email, fields.password);
-          setSession(next);
-          setStatus('signedIn');
+          const next = await authService.signUp(input);
+          await writeSession(next);
+          await activate(next);
         } catch (reason: unknown) {
-          const fieldsInError = fieldErrors(reason);
-          const message = fieldsInError.username
-            ? 'A user with this username already exists.'
-            : fieldsInError.date_of_birth
-              ? 'You must be aged 13 or over to sign up!'
-              : /already exist/i.test(apiMessage(reason, ''))
-                ? 'This email already exists.'
-                : apiMessage(reason, 'Unable to create your account right now.');
+          const message =
+            reason instanceof Error ? reason.message : 'Unable to create your account right now.';
           setError(message);
           throw new Error(message, { cause: reason });
         }
       },
-      signOut: async () => {
-        await tokens.clear();
-        queryClient.clear();
-        await clearSession();
-        setSession(null);
-        setStatus('signedOut');
-      },
+      signOut,
     }),
-    [error, session, status],
+    [activate, counts, error, refreshCounts, session, signOut, status, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -152,4 +187,19 @@ export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) throw new Error('useAuth must be used inside AuthProvider.');
   return context;
+}
+
+/** The signed-in user. Only call inside screens that require a session. */
+export function useMe(): User {
+  const { user } = useAuth();
+  return (
+    user ?? {
+      id: '',
+      username: '',
+      displayName: '',
+      bio: '',
+      followers: 0,
+      following: 0,
+    }
+  );
 }

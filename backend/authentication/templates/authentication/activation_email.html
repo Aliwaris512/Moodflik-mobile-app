@@ -1,0 +1,116 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        color: #333;
+      }
+
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      .header {
+        margin-bottom: 20px;
+      }
+
+      .logo {
+        font-size: 24px;
+        font-weight: bold;
+        color: #6c0ac7;
+      }
+
+      .content {
+        margin-bottom: 30px;
+      }
+
+      .button {
+        display: inline-block;
+        padding: 12px 24px;
+        background-color: #58bf30;
+        color: white !important;
+        text-decoration: none;
+        border-radius: 50px;
+        font-weight: bold;
+        margin: 20px 0;
+      }
+
+      .footer {
+        font-size: 12px;
+        color: #888;
+        margin-top: 30px;
+        border-top: 1px solid #eee;
+        padding-top: 20px;
+      }
+
+      .emoji {
+        font-size: 1.2em;
+        vertical-align: middle;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <div class="header" style="text-align: left">
+        <img
+          src="{{ logo_src }}"
+          alt="Moodflik"
+          style="height: 40px; width: auto; display: block"
+        />
+      </div>
+      <div class="content">
+        <p>Hey there {{ first_name }},</p>
+
+        <p>
+          Welcome to Moodflik—where your highs shine in green 🟢and your lows glow in red 🔴
+          (because every mood deserves the spotlight).
+        </p>
+
+        <p>
+          We're thrilled to have you! Whether you're here to share joy, 💚 vent creatively, 🤨 or
+          just join in with the collective vibes here, you're officially part of a space that gets
+          you.
+        </p>
+
+        <p>Ready to get started? Activate your Moodflik powers now ⚡ (cape optional)</p>
+
+        <p>Click below to activate your account and let your mood do the talking:</p>
+
+        <a href="{{ activation_link }}" class="button" style="background-color: #6c0ac7"
+          >Activate My Account</a
+        >
+
+        <p>See you on the flik side,<br />— From the Moodflik Team.</p>
+
+        <div style="text-align: center; margin-top: 30px">
+          <img
+            src="{{ logo_src }}"
+            alt="Moodflik"
+            style="height: 40px; width: auto; display: block; margin: 0 auto 8px auto"
+          />
+          <span style="font-size: 28px; font-weight: bold; color: #6c0ac7">Moodflik</span>
+        </div>
+
+        <p
+          style="
+            font-style: italic;
+            color: #666;
+            font-size: 0.9em;
+            text-align: center;
+            margin-top: 15px;
+          "
+        >
+          P.S. Feeling excited? That's a green post 🟢 waiting to happen.
+        </p>
+      </div>
+      <div class="footer">
+        <p>If you didn't create an account with Moodflik, you can safely ignore this email.</p>
+      </div>
+    </div>
+  </body>
+</html>

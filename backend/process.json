@@ -1,0 +1,13 @@
+{
+  "apps": [
+    {
+      "name": "backend",
+      "script": "/root/moodflik/backend/venv/bin/python",
+      "args": ["-m", "daphne", "-p", "8000", "-b", "0.0.0.0", "moodflik.asgi:application"],
+      "cwd": "/root/moodflik/backend",
+      "env": {
+        "DJANGO_SETTINGS_MODULE": "moodflik.settings"
+      }
+    }
+  ]
+}

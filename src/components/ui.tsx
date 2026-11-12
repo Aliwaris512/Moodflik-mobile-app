@@ -1,6 +1,9 @@
-import React, { PropsWithChildren, useState } from 'react';
+import React, { PropsWithChildren, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
+  PanResponder,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -8,6 +11,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -22,6 +26,8 @@ import { SymbolView, type SymbolViewProps } from 'expo-symbols';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, layout, radius, spacing, typography } from '@/constants/theme';
 import { RAIL_WIDTH, useResponsive } from '@/hooks/use-responsive';
+import { useAuth } from '@/context/AuthContext';
+import { askWhyService, feedService, postService, profileService } from '@/services/repositories';
 import type {
   Comment,
   Conversation,
@@ -319,6 +325,7 @@ export function AppHeader({
   menu?: boolean;
 }) {
   const r = useResponsive();
+  const { counts } = useAuth();
   const small = r.compact || r.short;
   return (
     <View style={[styles.header, { paddingHorizontal: r.gutter, height: small ? 52 : 60 }]}>
@@ -362,7 +369,7 @@ export function AppHeader({
             small={small}
             icon="chat"
             label="Messages"
-            badge={2}
+            badge={counts.messages}
             onPress={() => router.push('/direct-message')}
           />
         )}
@@ -381,12 +388,14 @@ const tabs = [
 
 export function BottomTabs({
   active = 'home',
-  notificationCount = 2,
+  notificationCount,
 }: {
   active?: string;
   notificationCount?: number;
 }) {
   const insets = useSafeAreaInsets();
+  const { counts } = useAuth();
+  notificationCount = notificationCount ?? counts.notifications;
   const r = useResponsive();
   return (
     <View
@@ -453,12 +462,14 @@ export function BottomTabs({
 /** Vertical navigation for wide screens: unfolded foldables, tablets and landscape phones. */
 export function NavRail({
   active = '',
-  notificationCount = 2,
+  notificationCount,
 }: {
   active?: string;
   notificationCount?: number;
 }) {
   const insets = useSafeAreaInsets();
+  const { counts } = useAuth();
+  notificationCount = notificationCount ?? counts.notifications;
   const r = useResponsive();
   const showLabels = !r.short;
   return (
@@ -841,6 +852,170 @@ export function MoodToggle({
   );
 }
 
+const SLIDER_HEIGHT = 56;
+const SLIDER_PAD = 4;
+
+/** Drag, tap and spring logic for MoodSlider, kept outside the component so it can hold gesture state. */
+function createSliderController(initial: MoodSide, onSide: (side: MoodSide) => void) {
+  let width = 0;
+  let startProgress = 0;
+  let tapX = 0;
+  let moved = false;
+  let side = initial;
+  let notify = onSide;
+  // 0 = thumb on the green (love) half, 1 = on the red (dislike) half.
+  const progress = new Animated.Value(initial === 'love' ? 0 : 1);
+  const travel = () => Math.max(1, (width - SLIDER_PAD * 2) / 2);
+
+  const settle = (target: MoodSide) => {
+    const changed = target !== side;
+    side = target;
+    Animated.spring(progress, {
+      toValue: target === 'love' ? 0 : 1,
+      useNativeDriver: true,
+      damping: 16,
+      stiffness: 220,
+      mass: 0.8,
+    }).start();
+    if (changed) notify(target);
+  };
+
+  const responder = PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: (event) => {
+      moved = false;
+      tapX = event.nativeEvent.locationX;
+      progress.stopAnimation((value) => {
+        startProgress = value;
+      });
+    },
+    onPanResponderMove: (_event, gesture) => {
+      if (Math.abs(gesture.dx) > 4) moved = true;
+      if (moved) progress.setValue(Math.min(1, Math.max(0, startProgress + gesture.dx / travel())));
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      if (!moved) return settle(tapX > width / 2 ? 'dislike' : 'love');
+      const current = Math.min(1, Math.max(0, startProgress + gesture.dx / travel()));
+      if (gesture.vx > 0.4) return settle('dislike');
+      if (gesture.vx < -0.4) return settle('love');
+      settle(current > 0.5 ? 'dislike' : 'love');
+    },
+  });
+  return {
+    progress,
+    panHandlers: responder.panHandlers,
+    setCallback: (callback: (next: MoodSide) => void) => {
+      notify = callback;
+    },
+    setWidth: (next: number) => {
+      width = next;
+    },
+    /** Moves the thumb without notifying (for changes that came from outside). */
+    moveTo: (target: MoodSide) => {
+      if (target === side) return;
+      side = target;
+      Animated.spring(progress, {
+        toValue: target === 'love' ? 0 : 1,
+        useNativeDriver: true,
+        damping: 16,
+        stiffness: 220,
+        mass: 0.8,
+      }).start();
+    },
+    settle,
+  };
+}
+
+/**
+ * A pill toggle: a green "love" half and a red "dislike" half with a white thumb that glides
+ * between them. Drag the thumb or tap a side to switch.
+ */
+export function MoodSlider({
+  value,
+  onChange,
+  loveLabel = 'Things I love',
+  dislikeLabel = 'Things I dislike',
+}: {
+  value: MoodSide;
+  onChange: (value: MoodSide) => void;
+  loveLabel?: string;
+  dislikeLabel?: string;
+}) {
+  const [width, setWidth] = useState(0);
+  const [slider] = useState(() => createSliderController(value, onChange));
+  useEffect(() => slider.setCallback(onChange), [slider, onChange]);
+  useEffect(() => slider.moveTo(value), [slider, value]);
+
+  const thumbWidth = Math.max(0, (width - SLIDER_PAD * 2) / 2);
+  const { progress } = slider;
+  const translateX = progress.interpolate({ inputRange: [0, 1], outputRange: [0, thumbWidth] });
+  const loveOpacity = progress.interpolate({
+    inputRange: [0, 0.5],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+  const dislikeOpacity = progress.interpolate({
+    inputRange: [0.5, 1],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
+  return (
+    <View
+      style={styles.moodPill}
+      onLayout={(event) => {
+        slider.setWidth(event.nativeEvent.layout.width);
+        setWidth(event.nativeEvent.layout.width);
+      }}
+      accessible
+      accessibilityRole="adjustable"
+      accessibilityLabel="Mood filter"
+      accessibilityValue={{ text: value === 'love' ? loveLabel : dislikeLabel }}
+      accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+      onAccessibilityAction={(event) =>
+        slider.settle(event.nativeEvent.actionName === 'increment' ? 'dislike' : 'love')
+      }
+      {...slider.panHandlers}
+    >
+      <View pointerEvents="none" style={styles.moodPillTrack}>
+        <View style={[styles.moodPillHalf, { backgroundColor: colors.success }]}>
+          <Icon name="heart" size={18} color={colors.white} />
+          <Text numberOfLines={1} style={styles.moodPillLabelOn}>
+            {loveLabel}
+          </Text>
+        </View>
+        <View style={[styles.moodPillHalf, { backgroundColor: colors.danger }]}>
+          <Icon name="thumbDown" size={18} color={colors.white} />
+          <Text numberOfLines={1} style={styles.moodPillLabelOn}>
+            {dislikeLabel}
+          </Text>
+        </View>
+      </View>
+      {width > 0 && (
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.moodPillThumb, { width: thumbWidth, transform: [{ translateX }] }]}
+        >
+          <Animated.View style={[styles.moodPillThumbContent, { opacity: loveOpacity }]}>
+            <Icon name="heart" size={18} color={colors.success} />
+            <Text numberOfLines={1} style={[styles.moodPillLabel, { color: colors.success }]}>
+              {loveLabel}
+            </Text>
+          </Animated.View>
+          <Animated.View style={[styles.moodPillThumbContent, { opacity: dislikeOpacity }]}>
+            <Icon name="thumbDown" size={18} color={colors.danger} />
+            <Text numberOfLines={1} style={[styles.moodPillLabel, { color: colors.danger }]}>
+              {dislikeLabel}
+            </Text>
+          </Animated.View>
+        </Animated.View>
+      )}
+    </View>
+  );
+}
+
 export function MoodSelector({
   value,
   onChange,
@@ -886,6 +1061,8 @@ export function Avatar({
   size?: number;
   ring?: boolean;
 }) {
+  const [failed, setFailed] = useState(false);
+  const showPhoto = !!user.photoUrl && !failed;
   return (
     <View
       style={[
@@ -895,9 +1072,17 @@ export function Avatar({
       ]}
       accessibilityLabel={`${user.displayName} avatar`}
     >
-      <Text style={[styles.avatarText, { fontSize: size * 0.38 }]}>
-        {initials(user.displayName)}
-      </Text>
+      {showPhoto ? (
+        <Image
+          source={{ uri: user.photoUrl }}
+          style={{ width: '100%', height: '100%', borderRadius: size / 2 }}
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <Text style={[styles.avatarText, { fontSize: size * 0.38 }]}>
+          {initials(user.displayName || user.username || '?')}
+        </Text>
+      )}
     </View>
   );
 }
@@ -1011,30 +1196,313 @@ export function ProfileStats({
 /* Posts                                                               */
 /* ------------------------------------------------------------------ */
 
+type HeartParticle = {
+  id: number;
+  x: number;
+  rise: number;
+  sway: number;
+  size: number;
+  delay: number;
+  duration: number;
+};
+
+function HeartBurst({ color, onDone }: { color: string; onDone: () => void }) {
+  // Random look for each heart; created once per burst.
+  const [particles] = useState<HeartParticle[]>(() =>
+    Array.from({ length: 9 }, (_, id) => ({
+      id,
+      x: (Math.random() - 0.5) * 70,
+      rise: 170 + Math.random() * 120,
+      sway: 12 + Math.random() * 22,
+      size: 16 + Math.random() * 16,
+      delay: Math.random() * 350,
+      duration: 2200 + Math.random() * 600,
+    })),
+  );
+  const [progress] = useState(() => particles.map(() => new Animated.Value(0)));
+  useEffect(() => {
+    Animated.parallel(
+      progress.map((value, index) =>
+        Animated.timing(value, {
+          toValue: 1,
+          delay: particles[index].delay,
+          duration: particles[index].duration,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ),
+    ).start(({ finished }) => finished && onDone());
+  }, [onDone, particles, progress]);
+  return (
+    <>
+      {particles.map((particle, index) => {
+        const t = progress[index];
+        return (
+          <Animated.View
+            key={particle.id}
+            pointerEvents="none"
+            style={[
+              styles.floatingHeart,
+              {
+                opacity: t.interpolate({
+                  inputRange: [0, 0.08, 0.65, 1],
+                  outputRange: [0, 1, 1, 0],
+                }),
+                transform: [
+                  { translateX: particle.x },
+                  {
+                    translateY: t.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0, -particle.rise],
+                    }),
+                  },
+                  {
+                    translateX: t.interpolate({
+                      inputRange: [0, 0.25, 0.5, 0.75, 1],
+                      outputRange: [0, particle.sway, 0, -particle.sway, 0],
+                    }),
+                  },
+                  {
+                    scale: t.interpolate({
+                      inputRange: [0, 0.15, 1],
+                      outputRange: [0.3, 1.15, 0.9],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <Icon name="heart" size={particle.size} color={color} />
+          </Animated.View>
+        );
+      })}
+    </>
+  );
+}
+
+/** Hearts that float up and fade over a couple of seconds each time `trigger` changes. */
+function FloatingHearts({ trigger, color }: { trigger: number; color: string }) {
+  const [bursts, setBursts] = useState<number[]>([]);
+  const [seen, setSeen] = useState(0);
+  if (trigger !== seen) {
+    setSeen(trigger);
+    if (trigger > 0) setBursts((current) => [...current, trigger]);
+  }
+  return (
+    <View pointerEvents="none" style={styles.floatingHearts}>
+      {bursts.map((id) => (
+        <HeartBurst
+          key={id}
+          color={color}
+          onDone={() => setBursts((current) => current.filter((item) => item !== id))}
+        />
+      ))}
+    </View>
+  );
+}
+
+export type MenuAction = {
+  label: string;
+  onPress: () => void;
+  tone?: 'default' | 'danger';
+};
+
+/** A bottom sheet of actions. Works on iOS, Android and web (unlike Alert.alert with buttons). */
+export function ActionMenu({
+  visible,
+  title,
+  actions,
+  onClose,
+}: {
+  visible: boolean;
+  title: string;
+  actions: MenuAction[];
+  onClose: () => void;
+}) {
+  return (
+    <AppModal visible={visible} title={title} onClose={onClose}>
+      <View style={{ gap: spacing.sm, paddingBottom: spacing.lg }}>
+        {actions.map((action) => (
+          <Pressable
+            key={action.label}
+            accessibilityRole="button"
+            onPress={() => {
+              onClose();
+              action.onPress();
+            }}
+            style={({ pressed }) => [styles.menuAction, pressed && styles.pressedRow]}
+          >
+            <Text
+              style={[styles.menuActionText, action.tone === 'danger' && { color: colors.danger }]}
+            >
+              {action.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </AppModal>
+  );
+}
+
+const reportReasons = ['Spam', 'Inappropriate content', 'Harassment or hate', 'Something else'];
+
 export function PostCard({
   post,
   onComment,
+  onRemoved,
+  onChanged,
   showFollow = true,
 }: {
   post: Post;
   onComment?: () => void;
+  /** Called when the post should disappear from the list (deleted, muted author, blocked author). */
+  onRemoved?: (postId: string) => void;
+  onChanged?: (post: Post) => void;
   showFollow?: boolean;
 }) {
   const [reaction, setReaction] = useState(post.reacted);
   const [likes, setLikes] = useState(post.likes);
+  const [dislikes, setDislikes] = useState(post.dislikes);
   const [saved, setSaved] = useState(!!post.favourite);
   const [whyOpen, setWhyOpen] = useState(false);
-  const [following, setFollowing] = useState(!!post.author.isFollowing);
-  const dislike = isDislikeMood(post.mood);
+  const [whyLikes, setWhyLikes] = useState(post.whyLikes ?? 0);
+  const [whyDislikes, setWhyDislikes] = useState(post.whyDislikes ?? 0);
+  const [follow, setFollow] = useState<'none' | 'pending' | 'approved'>(
+    post.author.isFollowing
+      ? 'approved'
+      : post.author.followRequest === 'pending'
+        ? 'pending'
+        : 'none',
+  );
+  const [menu, setMenu] = useState<'none' | 'options' | 'report' | 'delete'>('none');
+  const [note, setNote] = useState('');
+  const [burst, setBurst] = useState(0);
+  const dislike = post.type ? post.type === 'dislike' : isDislikeMood(post.mood);
   const tint = dislike ? colors.danger : colors.success;
   const soft = dislike ? colors.dangerSoft : colors.successSoft;
   const reacted = reaction === 'like';
-  const toggleReaction = () => {
-    setReaction(reacted ? undefined : 'like');
-    setLikes((value) => value + (reacted ? -1 : 1));
-  };
-  const isMine = post.author.id === 'me';
+  const disliked = reaction === 'dislike';
+  const isMine = !!post.mine;
   const { compact } = useResponsive();
+
+  const fail = (reason: unknown, fallback: string) => {
+    console.error(fallback, reason);
+    setNote(reason instanceof Error ? reason.message : fallback);
+  };
+
+  const toggleReaction = async (kind: 'like' | 'dislike') => {
+    const previous = { reaction, likes, dislikes };
+    const removing = reaction === kind;
+    setReaction(removing ? undefined : kind);
+    setLikes((value) =>
+      Math.max(0, value + (kind === 'like' ? (removing ? -1 : 1) : reaction === 'like' ? -1 : 0)),
+    );
+    setDislikes((value) =>
+      Math.max(
+        0,
+        value + (kind === 'dislike' ? (removing ? -1 : 1) : reaction === 'dislike' ? -1 : 0),
+      ),
+    );
+    if (!removing) setBurst((value) => value + 1);
+    try {
+      const fresh = await feedService.toggleReaction(post.id, kind);
+      setLikes(fresh.likes);
+      setDislikes(fresh.dislikes);
+    } catch (reason: unknown) {
+      setReaction(previous.reaction);
+      setLikes(previous.likes);
+      setDislikes(previous.dislikes);
+      fail(reason, 'We could not save your reaction.');
+    }
+  };
+  const toggleSaved = async () => {
+    const previous = saved;
+    setSaved(!previous);
+    try {
+      await feedService.toggleFavourite(post.id);
+    } catch (reason: unknown) {
+      setSaved(previous);
+      fail(reason, 'We could not update your favourites.');
+    }
+  };
+  const toggleFollow = async () => {
+    const previous = follow;
+    try {
+      if (previous === 'none') {
+        setFollow(await profileService.follow(post.author.id));
+      } else {
+        setFollow('none');
+        await profileService.unfollow(post.author.id);
+      }
+    } catch (reason: unknown) {
+      setFollow(previous);
+      fail(reason, 'We could not update that follow.');
+    }
+  };
+  const sharePost = async () => {
+    try {
+      const result = await Share.share({
+        message: `${post.author.displayName}: ${post.mood} ${post.content}`,
+      });
+      if (result.action === Share.sharedAction) await feedService.share(post.id);
+    } catch (reason: unknown) {
+      fail(reason, 'We could not share this post.');
+    }
+  };
+  const reactToWhy = async (type: 'like' | 'dislike') => {
+    try {
+      await askWhyService.reactToWhy(post.id, type);
+      if (type === 'like') setWhyLikes((value) => value + 1);
+      else setWhyDislikes((value) => value + 1);
+    } catch (reason: unknown) {
+      fail(reason, 'We could not save your reaction.');
+    }
+  };
+  const run = async (work: () => Promise<void>, fallback: string, removes = false) => {
+    try {
+      await work();
+      if (removes) onRemoved?.(post.id);
+    } catch (reason: unknown) {
+      fail(reason, fallback);
+    }
+  };
+
+  const optionActions: MenuAction[] = isMine
+    ? [
+        { label: 'Edit post', onPress: () => router.push(`/edit-post?postId=${post.id}`) },
+        {
+          label: post.askWhy === false ? 'Allow Ask Why' : 'Turn off Ask Why',
+          onPress: () =>
+            void run(async () => {
+              const enabled = await postService.toggleAskWhy(post.id);
+              onChanged?.({ ...post, askWhy: enabled });
+            }, 'We could not update Ask Why.'),
+        },
+        { label: 'Delete post', tone: 'danger', onPress: () => setMenu('delete') },
+      ]
+    : [
+        {
+          label: `Mute @${post.author.username}`,
+          onPress: () =>
+            void run(
+              () => profileService.mute(post.author.id),
+              'We could not mute this user.',
+              true,
+            ),
+        },
+        { label: 'Report post', onPress: () => setMenu('report') },
+        {
+          label: `Block @${post.author.username}`,
+          tone: 'danger',
+          onPress: () =>
+            void run(
+              () => profileService.block(post.author.id),
+              'We could not block this user.',
+              true,
+            ),
+        },
+      ];
+
   return (
     <View style={[styles.postCard, compact && styles.postCardCompact]}>
       <View style={[styles.postAuthor, compact && { gap: spacing.sm }]}>
@@ -1054,19 +1522,25 @@ export function PostCard({
         {showFollow && !isMine && (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={following ? 'Unfollow' : 'Follow'}
+            accessibilityLabel={
+              follow === 'approved'
+                ? 'Unfollow'
+                : follow === 'pending'
+                  ? 'Cancel request'
+                  : 'Follow'
+            }
             hitSlop={6}
-            onPress={() => setFollowing((value) => !value)}
-            style={[styles.followPill, following && styles.followPillOn]}
+            onPress={() => void toggleFollow()}
+            style={[styles.followPill, follow !== 'none' && styles.followPillOn]}
           >
             <Icon
-              name={following ? 'check' : 'personAdd'}
+              name={follow === 'none' ? 'personAdd' : 'check'}
               size={16}
-              color={following ? colors.white : colors.primary}
+              color={follow === 'none' ? colors.primary : colors.white}
             />
           </Pressable>
         )}
-        <AppIconButton label="Post options" onPress={() => undefined}>
+        <AppIconButton label="Post options" onPress={() => setMenu('options')}>
           <Icon name="more" size={20} color={colors.muted} />
         </AppIconButton>
       </View>
@@ -1077,32 +1551,76 @@ export function PostCard({
 
       <View style={[styles.bubble, { backgroundColor: tint }]}>
         <Text style={styles.bubbleText}>{post.content}</Text>
-        {post.media?.[0] && (
+        {post.media?.[0] && post.media[0].type === 'image' && (
           <Image source={{ uri: post.media[0].uri }} style={styles.bubbleMedia} />
         )}
       </View>
 
-      {whyOpen && post.why && (
+      {whyOpen && (
         <View style={[styles.whyBox, { backgroundColor: soft, borderLeftColor: tint }]}>
           <Text style={[styles.whyLabel, { color: tint }]}>Why?</Text>
-          <Text style={styles.whyText}>{post.why}</Text>
+          <Text style={styles.whyText}>{post.why ?? 'No reason shared yet.'}</Text>
+          <View style={styles.whyActions}>
+            {!!post.why && (
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Like this reason"
+                  onPress={() => void reactToWhy('like')}
+                  style={styles.whyReact}
+                >
+                  <Icon name="heart" size={15} color={colors.success} />
+                  <Text style={styles.actionCount}>{whyLikes}</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Dislike this reason"
+                  onPress={() => void reactToWhy('dislike')}
+                  style={styles.whyReact}
+                >
+                  <Icon name="thumbDown" size={15} color={colors.danger} />
+                  <Text style={styles.actionCount}>{whyDislikes}</Text>
+                </Pressable>
+              </>
+            )}
+            {post.askWhy !== false && (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.push(`/ask-why-threads?postId=${post.id}`)}
+              >
+                <Text style={[styles.whyButtonText, { color: tint }]}>Ask why</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
       )}
+
+      {!!note && <Text style={styles.postNote}>{note}</Text>}
 
       <View style={[styles.postActions, compact && { gap: 0 }]}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="React to post"
+          accessibilityLabel="Like post"
           accessibilityState={{ selected: reacted }}
-          onPress={toggleReaction}
-          style={[styles.actionPill, reacted && { backgroundColor: soft }]}
+          onPress={() => void toggleReaction('like')}
+          style={[styles.actionPill, reacted && { backgroundColor: colors.successSoft }]}
         >
           <Icon
             name={reacted ? 'heart' : 'heartOutline'}
             size={18}
-            color={reacted ? tint : colors.muted}
+            color={reacted ? colors.success : colors.muted}
           />
-          <Text style={[styles.actionCount, reacted && { color: tint }]}>{likes}</Text>
+          <Text style={[styles.actionCount, reacted && { color: colors.success }]}>{likes}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Dislike post"
+          accessibilityState={{ selected: disliked }}
+          onPress={() => void toggleReaction('dislike')}
+          style={[styles.actionPill, disliked && { backgroundColor: colors.dangerSoft }]}
+        >
+          <Icon name="thumbDown" size={18} color={disliked ? colors.danger : colors.muted} />
+          <Text style={[styles.actionCount, disliked && { color: colors.danger }]}>{dislikes}</Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
@@ -1116,7 +1634,7 @@ export function PostCard({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={saved ? 'Remove from favourites' : 'Save to favourites'}
-          onPress={() => setSaved((value) => !value)}
+          onPress={() => void toggleSaved()}
           style={styles.actionPill}
         >
           <Icon name="bookmark" size={18} color={saved ? colors.primary : colors.muted} />
@@ -1124,12 +1642,13 @@ export function PostCard({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Share post"
+          onPress={() => void sharePost()}
           style={styles.actionPill}
         >
           <Icon name="share" size={18} color={colors.muted} />
         </Pressable>
         <View style={{ flex: 1 }} />
-        {post.why && (
+        {(post.why || post.askWhy !== false) && (
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ expanded: whyOpen }}
@@ -1143,6 +1662,41 @@ export function PostCard({
           </Pressable>
         )}
       </View>
+
+      <FloatingHearts trigger={burst} color={disliked ? colors.danger : colors.success} />
+      <ActionMenu
+        visible={menu === 'options'}
+        title="Post options"
+        actions={optionActions}
+        onClose={() => setMenu('none')}
+      />
+      <ActionMenu
+        visible={menu === 'report'}
+        title="Why are you reporting this?"
+        actions={reportReasons.map((reason) => ({
+          label: reason,
+          onPress: () =>
+            void run(async () => {
+              await feedService.report(post.id, reason);
+              setNote('Thanks. This post has been reported to the Moodflik team.');
+            }, 'We could not report this post.'),
+        }))}
+        onClose={() => setMenu('none')}
+      />
+      <ActionMenu
+        visible={menu === 'delete'}
+        title="Delete this post?"
+        actions={[
+          {
+            label: 'Yes, delete it',
+            tone: 'danger',
+            onPress: () =>
+              void run(() => postService.remove(post.id), 'We could not delete this post.', true),
+          },
+          { label: 'Keep it', onPress: () => undefined },
+        ]}
+        onClose={() => setMenu('none')}
+      />
     </View>
   );
 }
@@ -1211,10 +1765,25 @@ const notificationIcon: Record<string, { icon: IconName; color: string }> = {
   'follow-request': { icon: 'personAdd', color: colors.primary },
   comment: { icon: 'comment', color: colors.primary },
   favourite: { icon: 'bookmark', color: colors.primary },
+  message: { icon: 'chat', color: colors.primary },
+  'message-request': { icon: 'chat', color: colors.primary },
+  mention: { icon: 'tag', color: colors.primary },
+  thread: { icon: 'help', color: colors.primary },
+  post: { icon: 'mood', color: colors.success },
 };
 
-export function NotificationItem({ item, onPress }: { item: Notification; onPress?: () => void }) {
-  const meta = notificationIcon[item.kind ?? 'reaction'];
+export function NotificationItem({
+  item,
+  onPress,
+  onAccept,
+  onDecline,
+}: {
+  item: Notification;
+  onPress?: () => void;
+  onAccept?: () => Promise<void>;
+  onDecline?: () => Promise<void>;
+}) {
+  const meta = notificationIcon[item.kind ?? 'reaction'] ?? notificationIcon.reaction;
   const [handled, setHandled] = useState<'accepted' | 'declined' | null>(null);
   return (
     <Pressable
@@ -1248,12 +1817,16 @@ export function NotificationItem({ item, onPress }: { item: Notification; onPres
             <Text style={styles.hint}>Request {handled}</Text>
           ) : (
             <View style={styles.inlineButtons}>
-              <Button label="Accept" size="sm" onPress={() => setHandled('accepted')} />
+              <Button
+                label="Accept"
+                size="sm"
+                onPress={() => void onAccept?.().then(() => setHandled('accepted'))}
+              />
               <Button
                 label="Decline"
                 size="sm"
                 variant="soft"
-                onPress={() => setHandled('declined')}
+                onPress={() => void onDecline?.().then(() => setHandled('declined'))}
               />
             </View>
           ))}
@@ -1737,6 +2310,68 @@ const styles = StyleSheet.create({
   },
   listCopy: { flex: 1, gap: 2 },
   profileHeader: { alignItems: 'center', gap: spacing.xs },
+  moodPill: {
+    height: SLIDER_HEIGHT,
+    borderRadius: SLIDER_HEIGHT / 2,
+    overflow: 'hidden',
+    ...layout.shadow,
+  },
+  moodPillTrack: { ...StyleSheet.absoluteFill, flexDirection: 'row' },
+  moodPillHalf: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  moodPillLabelOn: {
+    fontFamily: fonts.nunitoBold,
+    fontSize: 13,
+    color: colors.white,
+    flexShrink: 1,
+  },
+  moodPillThumb: {
+    position: 'absolute',
+    left: SLIDER_PAD,
+    top: SLIDER_PAD,
+    height: SLIDER_HEIGHT - SLIDER_PAD * 2,
+    borderRadius: (SLIDER_HEIGHT - SLIDER_PAD * 2) / 2,
+    backgroundColor: colors.surface,
+    ...layout.shadowStrong,
+  },
+  moodPillThumbContent: {
+    ...StyleSheet.absoluteFill,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  moodPillLabel: { fontFamily: fonts.nunitoBold, fontSize: 13, flexShrink: 1 },
+  floatingHearts: {
+    position: 'absolute',
+    left: spacing.lg + 8,
+    bottom: spacing.lg + 8,
+    width: 0,
+    height: 0,
+  },
+  floatingHeart: { position: 'absolute', left: 0, bottom: 0 },
+  menuAction: {
+    minHeight: layout.touchTarget,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+  },
+  menuActionText: { fontFamily: fonts.nunitoSemiBold, fontSize: 16, color: colors.darkText },
+  whyActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginTop: spacing.xs,
+  },
+  whyReact: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  postNote: { ...typography.caption, color: colors.muted },
   statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   statTile: {
     flex: 1,

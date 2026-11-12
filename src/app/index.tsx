@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Icon, type IconName } from '@/components/ui';
 import { colors, fonts, layout, radius, spacing, typography } from '@/constants/theme';
 import { useResponsive } from '@/hooks/use-responsive';
+import { useAuth } from '@/context/AuthContext';
 
 const features: { icon: IconName; tint: string; soft: string; text: ReactNode }[] = [
   {
@@ -35,8 +36,10 @@ const features: { icon: IconName; tint: string; soft: string; text: ReactNode }[
 
 export default function Landing() {
   const r = useResponsive();
+  const { status } = useAuth();
   // Hero beside the actions on unfolded foldables, tablets and landscape phones.
   const split = r.width >= 700 || r.landscape;
+  if (status === 'signedIn') return <Redirect href="/home" />;
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
       <ScrollView

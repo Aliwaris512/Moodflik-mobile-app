@@ -4,7 +4,6 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { colors } from '@/constants/theme';
 import { AuthProvider } from '@/context/AuthContext';
-import { QueryProvider } from '@/lib/query';
 import { StatusBar } from 'expo-status-bar';
 
 SplashScreen.preventAutoHideAsync();
@@ -25,16 +24,11 @@ export default function RootLayout() {
 
   if (!loaded) return null;
   return (
-    <QueryProvider>
-      <AuthProvider>
-        <StatusBar style="light" />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: colors.background },
-          }}
-        />
-      </AuthProvider>
-    </QueryProvider>
+    <AuthProvider>
+      <StatusBar style="light" />
+      <Stack
+        screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}
+      />
+    </AuthProvider>
   );
 }

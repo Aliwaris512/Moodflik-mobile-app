@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Moodflik Account Activation</title>
+    <style>
+      body {
+        font-family: 'Open Sans', sans-serif;
+        background-color: #f2f3f8;
+        text-align: center;
+        padding: 50px;
+        color: #333;
+      }
+      .card {
+        background: white;
+        max-width: 500px;
+        margin: 0 auto;
+        border-radius: 8px;
+        box-shadow: 0 6px 18px 0 rgba(0, 0, 0, 0.06);
+        padding: 40px;
+      }
+      .success {
+        color: #4caf50;
+      }
+      .error {
+        color: #f44336;
+      }
+      a.button {
+        background-color: #4caf50;
+        color: white;
+        padding: 10px 25px;
+        text-decoration: none;
+        border-radius: 4px;
+        display: inline-block;
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1 class="{% if status == 'success' %}success{% else %}error{% endif %}">{{ title }}</h1>
+      <p>{{ message }}</p>
+      <a href="https://www.moodflik.com" class="button">Go to Moodflik</a>
+    </div>
+  </body>
+</html>
