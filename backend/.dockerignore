@@ -1,0 +1,6 @@
+venv
+Dockerfile
+.git
+READ.md
+__pycache__
+zappa_settings.json
