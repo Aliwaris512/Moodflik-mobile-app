@@ -1,0 +1,31 @@
+﻿# https://lefthook.dev/configuration/
+# Install hooks with `bunx lefthook install` (runs automatically via the `prepare` script).
+min_version: 1.10.0
+
+pre-commit:
+  parallel: false
+  jobs:
+    - name: format
+      glob: '*.{js,jsx,ts,tsx,json,md}'
+      exclude: 'bun.lock'
+      run: bunx oxfmt {staged_files}
+      stage_fixed: true
+
+    - name: lint
+      glob: '*.{js,jsx,ts,tsx}'
+      run: bunx oxlint {staged_files}
+
+pre-push:
+  parallel: true
+  jobs:
+    - name: lint
+      run: bun run lint
+
+    - name: format
+      run: bun run format:check
+
+    - name: typecheck
+      run: bun run typecheck
+
+    - name: test
+      run: bun test
