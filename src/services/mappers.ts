@@ -109,6 +109,24 @@ export function toIsoDate(value: string): string {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Uploaded files are stored with the host the phone used at the time (e.g. an old Wi-Fi address).
+ * Point them at the backend the app is talking to now so they keep loading.
+ */
+let mediaOrigin = '';
+/** Set once by the API layer with the origin of the backend in use (no trailing slash). */
+export function setMediaOrigin(origin: string) {
+  mediaOrigin = origin;
+}
+
+export function localizeMedia(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  const marker = '/api/media/';
+  const at = url.indexOf(marker);
+  if (at < 0) return url;
+  return mediaOrigin ? `${mediaOrigin}${url.slice(at)}` : url;
+}
+
 /* Users ------------------------------------------------------------- */
 
 const fullName = (first?: string, last?: string, fallback = '') =>
@@ -123,8 +141,8 @@ export function mapUser(raw: RawUser, counts?: { followers: number; following: n
     firstName: raw.first_name,
     lastName: raw.last_name,
     bio: raw.bio ?? '',
-    photoUrl: raw.photo_url || undefined,
-    coverUrl: raw.cover_photo_url || undefined,
+    photoUrl: localizeMedia(raw.photo_url),
+    coverUrl: localizeMedia(raw.cover_photo_url),
     followers: counts?.followers ?? 0,
     following: counts?.following ?? 0,
     isFollowing: raw.is_following,
@@ -148,7 +166,7 @@ export function mapPost(raw: RawPost, currentUserId?: string | null): Post {
     username: raw.user ?? '',
     displayName: fullName(raw.first_name, raw.last_name, raw.user ?? ''),
     bio: '',
-    photoUrl: raw.photo_url || undefined,
+    photoUrl: localizeMedia(raw.photo_url),
     followers: 0,
     following: 0,
   };
@@ -170,7 +188,12 @@ export function mapPost(raw: RawPost, currentUserId?: string | null): Post {
     reacted: raw.is_like ? 'like' : raw.is_dislike ? 'dislike' : undefined,
     favourite: !!raw.is_favourite,
     media: raw.media_url
-      ? [{ uri: raw.media_url, type: isVideo(raw.media_url) ? 'video' : 'image' }]
+      ? [
+          {
+            uri: localizeMedia(raw.media_url) ?? raw.media_url,
+            type: isVideo(raw.media_url) ? 'video' : 'image',
+          },
+        ]
       : undefined,
   };
 }
@@ -184,7 +207,7 @@ export function mapComment(raw: RawComment): Comment {
       username: raw.username ?? '',
       displayName: fullName(raw.first_name, raw.last_name, raw.username ?? ''),
       bio: '',
-      photoUrl: raw.photo_url || undefined,
+      photoUrl: localizeMedia(raw.photo_url),
       followers: 0,
       following: 0,
     },
