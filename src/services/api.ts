@@ -1,3 +1,4 @@
+import { setMediaOrigin } from '@/services/mappers';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { extractMessage } from './errors';
@@ -19,6 +20,7 @@ function resolveBaseUrl(): string {
 }
 
 export const API_BASE = resolveBaseUrl();
+setMediaOrigin(API_BASE.replace(/\/api$/, ''));
 export const WS_BASE = API_BASE.replace(/^http/, 'ws').replace(/\/api$/, '');
 
 const TIMEOUT_MS = 20000;

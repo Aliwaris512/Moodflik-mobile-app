@@ -4,6 +4,7 @@ import {
   AppState,
   Image,
   Keyboard as RNKeyboard,
+  Linking,
   Platform,
   Pressable,
   Share,
@@ -14,6 +15,18 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
+import {
+  aboutUs,
+  blockCopy,
+  communityGuidelines,
+  contactIntro,
+  cookies,
+  csae,
+  help,
+  policy,
+  terms,
+  type ContentBlock,
+} from '@/constants/legal-content';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ActionMenu,
@@ -170,9 +183,9 @@ const titles: Record<string, string> = {
   'direct-message': 'Messages',
   chat: 'Chat',
   settings: 'Settings',
-  'profile-setting': 'Edit profile',
-  'notification-setting': 'Notifications',
-  'privacy-setting': 'Privacy',
+  'profile-setting': 'Profile Settings',
+  'notification-setting': 'Notification Settings',
+  'privacy-setting': 'Privacy Settings',
   'create-post': 'Create post',
   'edit-post': 'Edit post',
   comments: 'Comments',
@@ -180,18 +193,18 @@ const titles: Record<string, string> = {
   'threads-list': 'Trending moods',
   'single-post': 'Post',
   'my-posts': 'My posts',
-  help: 'Help',
-  'about-us': 'About Moodflik',
-  contact: 'Contact us',
+  help: 'Help and FAQ',
+  'about-us': 'About Us',
+  contact: 'Contact Us',
   cookies: 'Cookies',
-  policy: 'Privacy policy',
-  'terms-conditions': 'Terms & conditions',
-  'community-guidelines': 'Community guidelines',
-  csae: 'Safety',
-  invite: 'Invite friends',
+  policy: 'Policy & Data Use',
+  'terms-conditions': 'Terms & Conditions',
+  'community-guidelines': 'Community Guidelines',
+  csae: 'CSAE Policy',
+  invite: 'Invite',
   'delete-account': 'Delete account',
-  'block-user': 'Block user',
-  'mute-report': 'Mute & report',
+  'block-user': 'Block User',
+  'mute-report': 'Mute & Report',
 };
 
 /* ------------------------------------------------------------------ */
@@ -1656,6 +1669,7 @@ function CreatePost({ edit = false }) {
         setContent(original.content);
         setWhy(original.why ?? '');
         setMediaUrl(original.media?.[0]?.uri);
+        setMediaIsVideo(original.media?.[0]?.type === 'video');
       })
       .catch((reason: unknown) => setError(messageOf(reason, 'We could not load this post.')))
       .finally(() => setBooting(false));
@@ -2433,56 +2447,89 @@ function Chat() {
 /* Info, threads, menu, settings                                       */
 /* ------------------------------------------------------------------ */
 
-function Info({ title }: { title: string }) {
-  const content: Record<string, string[]> = {
-    Help: [
-      'Find answers to common questions about sharing moods, interacting with posts, and managing your account.',
-      'If you need additional help, contact the Moodflik team from the Contact us page.',
-    ],
-    'About Moodflik': [
-      'Moodflik is a place for honest, respectful conversations. Every feeling is worth understanding and every person deserves a safe space to share.',
-      'We connect people through the things they love, dislike, and want to understand better.',
-    ],
-    'Community guidelines': [
-      'Be kind, curious, and respectful. Disagreement is welcome; harassment, hate speech, threats, and scams are not.',
-      'Help keep Moodflik safe by reporting content that breaks these guidelines.',
-    ],
-    'Privacy policy': [
-      'We use only the information needed to provide your Moodflik experience. Your account data is protected and is never sold.',
-      'You can manage profile visibility and notification preferences from Settings.',
-    ],
-    'Terms & conditions': [
-      'By using Moodflik, you agree to participate respectfully and to keep your account information accurate.',
-      'You are responsible for the content you share and for following applicable laws.',
-    ],
-  };
+const longPages: Record<string, readonly ContentBlock[]> = {
+  'about-us': aboutUs,
+  help,
+  'terms-conditions': terms,
+  policy,
+  csae,
+  cookies,
+  'community-guidelines': communityGuidelines,
+};
+
+function PageBlocks({ blocks }: { blocks: readonly ContentBlock[] }) {
+  return (
+    <>
+      {blocks.map(([kind, text], index) => {
+        if (kind === 'video')
+          return (
+            <Pressable
+              key={index}
+              accessibilityRole="link"
+              accessibilityLabel="Watch the video on YouTube"
+              onPress={() => void Linking.openURL(`https://youtu.be/${text}`)}
+            >
+              <Image
+                source={{ uri: `https://img.youtube.com/vi/${text}/hqdefault.jpg` }}
+                style={styles.helpVideo}
+                resizeMode="cover"
+              />
+            </Pressable>
+          );
+        if (kind === 'li')
+          return (
+            <Text key={index} style={styles.body}>
+              {'\u2022  '}
+              {text}
+            </Text>
+          );
+        return (
+          <Text
+            key={index}
+            style={[
+              styles.body,
+              kind === 'h' && styles.contentHeading,
+              kind === 'q' && styles.contentQuestion,
+            ]}
+          >
+            {text}
+          </Text>
+        );
+      })}
+    </>
+  );
+}
+
+function Info({ route, title }: { route: string; title: string }) {
+  const blocks = longPages[route];
   return (
     <Shell title={title} actions={false}>
       <Screen>
         <Card>
-          <View style={styles.infoIcon}>
-            <Icon
-              name={
-                title === 'Help'
-                  ? 'help'
-                  : title.includes('guidelines') || title === 'Safety'
-                    ? 'shield'
-                    : 'info'
-              }
-              size={26}
-            />
-          </View>
-          <Text style={styles.pageTitle}>{title}</Text>
-          {(
-            content[title] ?? [
-              'Moodflik provides clear information about this service and your account.',
-              'Please contact us if you have questions or need support.',
-            ]
-          ).map((paragraph) => (
-            <Text key={paragraph} style={styles.body}>
-              {paragraph}
-            </Text>
-          ))}
+          {blocks ? (
+            <>
+              {route === 'about-us' && <Text style={styles.centeredTitle}>About Us</Text>}
+              <PageBlocks blocks={blocks} />
+            </>
+          ) : (
+            <>
+              <View style={styles.infoIcon}>
+                <Icon
+                  name={title.includes('Guidelines') || title.includes('CSAE') ? 'shield' : 'info'}
+                  size={26}
+                />
+              </View>
+              <Text style={styles.pageTitle}>{title}</Text>
+              {[
+                'Moodflik provides clear information about this service and your account.',
+                'Please contact us if you have questions or need support.',
+              ].map((paragraph) => (
+                <Text key={paragraph} style={styles.body}>
+                  {paragraph}
+                </Text>
+              ))}
+            </>
+          )}
         </Card>
       </Screen>
     </Shell>
@@ -2490,13 +2537,10 @@ function Info({ title }: { title: string }) {
 }
 
 function Contact() {
-  const me = useMe();
-  const auth = useAuth();
-  const [name, setName] = useState(me.displayName);
-  const [email, setEmail] = useState(auth.session?.email ?? '');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [text, setText] = useState('');
   const [error, setError] = useState('');
-  const [done, setDone] = useState('');
   const [loading, setLoading] = useState(false);
   const submit = async () => {
     const check = validateEmail(email);
@@ -2506,8 +2550,10 @@ function Contact() {
       setLoading(true);
       setError('');
       await settingsService.contact(name.trim(), email.trim(), text.trim());
-      setDone('Thanks! Your message has been sent to the Moodflik team.');
+      setName('');
+      setEmail('');
       setText('');
+      Alert.alert('Message Sent!');
     } catch (reason: unknown) {
       setError(messageOf(reason, 'We could not send your message.'));
     } finally {
@@ -2515,17 +2561,24 @@ function Contact() {
     }
   };
   return (
-    <Shell title="Contact us" actions={false}>
+    <Shell title="Contact Us" actions={false}>
       <Keyboard>
         <Screen>
-          <PageTitle title="Contact us" subtitle="We usually reply within a couple of days." />
           <Card>
-            <Input label="Name" value={name} onChangeText={setName} icon="person" />
+            <Text style={styles.centeredTitle}>Contact Us</Text>
+            {contactIntro.map((paragraph) => (
+              <Text key={paragraph} style={styles.body}>
+                {paragraph}
+              </Text>
+            ))}
+          </Card>
+          <Card>
+            <Input label="Name" value={name} onChangeText={setName} placeholder="Type here..." />
             <Input
               label="Email"
               value={email}
               onChangeText={setEmail}
-              icon="mail"
+              placeholder="Type here..."
               keyboardType="email-address"
               autoCapitalize="none"
             />
@@ -2533,12 +2586,12 @@ function Contact() {
               label="Message"
               value={text}
               onChangeText={setText}
+              placeholder="Type here..."
               multiline
               numberOfLines={5}
             />
             {!!error && <Text style={commonStyles.error}>{error}</Text>}
-            {!!done && <Text style={styles.success}>{done}</Text>}
-            <Button label="Send message" loading={loading} onPress={() => void submit()} />
+            <Button label="Send" loading={loading} onPress={() => void submit()} />
           </Card>
         </Screen>
       </Keyboard>
@@ -2613,75 +2666,209 @@ function Invite() {
   );
 }
 
-/** Blocked or muted accounts, with a button to reverse it. */
+/** A list of people with one button each. */
+function PeopleList({
+  people,
+  actionLabel,
+  onAction,
+}: {
+  people: User[];
+  actionLabel: string;
+  onAction: (user: User) => void;
+}) {
+  return (
+    <Card padded={false}>
+      {people.map((user, index) => (
+        <View key={user.id}>
+          {index > 0 && <Divider />}
+          <UserListItem user={user} actionLabel={actionLabel} onAction={() => onAction(user)} />
+        </View>
+      ))}
+    </Card>
+  );
+}
+
+/** Block User (everything) and Mute & Report (muted list + help) pages. */
 function RestrictedUsers({ kind }: { kind: 'blocked' | 'muted' }) {
-  const [people, setPeople] = useState<User[]>([]);
+  const me = useMe();
+  const [blocked, setBlocked] = useState<User[]>([]);
+  const [muted, setMuted] = useState<User[]>([]);
+  const [recent, setRecent] = useState<User[]>([]);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<User[]>([]);
   const load = useCallback(async () => {
     try {
       setState('loading');
-      setPeople(
-        kind === 'blocked' ? await profileService.listBlocked() : await profileService.listMuted(),
-      );
+      const [blockedUsers, mutedUsers, rooms] = await Promise.all([
+        profileService.listBlocked(),
+        profileService.listMuted(),
+        chatService.listConversations(me.id).catch(() => []),
+      ]);
+      setBlocked(blockedUsers);
+      setMuted(mutedUsers);
+      setRecent(rooms.map((room) => room.participant).filter((user) => !!user.id));
       setState('ready');
     } catch (reason: unknown) {
       console.error('Unable to load list', reason);
       setState('error');
     }
-  }, [kind]);
+  }, [me.id]);
   useEffect(() => {
     const timer = setTimeout(() => void load(), 0);
     return () => clearTimeout(timer);
   }, [load]);
-  const undo = async (user: User) => {
+  useEffect(() => {
+    const text = query.trim();
+    if (text.length < 2) {
+      const clear = setTimeout(() => setResults([]), 0);
+      return () => clearTimeout(clear);
+    }
+    const timer = setTimeout(() => {
+      profileService
+        .listUsers(text)
+        .then((page) => setResults(page.items))
+        .catch((reason: unknown) => console.error('Unable to search people', reason));
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const fail = (reason: unknown) =>
+    Alert.alert('Moodflik', messageOf(reason, 'We could not update that.'));
+  const block = async (user: User) => {
     try {
-      if (kind === 'blocked') await profileService.unblock(user.id);
-      else await profileService.mute(user.id, false);
-      setPeople((current) => current.filter((item) => item.id !== user.id));
+      await profileService.block(user.id);
+      setBlocked((current) => [user, ...current.filter((item) => item.id !== user.id)]);
+      setMuted((current) => current.filter((item) => item.id !== user.id));
+      setQuery('');
     } catch (reason: unknown) {
-      Alert.alert('Moodflik', messageOf(reason, 'We could not update that.'));
+      fail(reason);
     }
   };
-  return (
-    <Shell title={titles[kind === 'blocked' ? 'block-user' : 'mute-report']} actions={false}>
-      <Screen>
-        <PageTitle
-          title={kind === 'blocked' ? 'Blocked users' : 'Muted accounts'}
-          subtitle={
-            kind === 'blocked'
-              ? 'Blocked people cannot see your posts or message you.'
-              : 'Muted accounts stay out of your feed.'
-          }
+  const unblock = async (user: User) => {
+    try {
+      await profileService.unblock(user.id);
+      setBlocked((current) => current.filter((item) => item.id !== user.id));
+    } catch (reason: unknown) {
+      fail(reason);
+    }
+  };
+  const unmute = async (user: User) => {
+    try {
+      await profileService.mute(user.id, false);
+      setMuted((current) => current.filter((item) => item.id !== user.id));
+    } catch (reason: unknown) {
+      fail(reason);
+    }
+  };
+
+  const blockedIds = new Set(blocked.map((user) => user.id));
+  const candidates = (list: User[]) =>
+    list.filter((user) => user.id !== me.id && !blockedIds.has(user.id));
+
+  const blockSection = (
+    <>
+      <Text style={styles.centeredTitle}>{blockCopy.title}</Text>
+      {blockCopy.intro.map((line) => (
+        <Text key={line} style={styles.body}>
+          {line}
+        </Text>
+      ))}
+      {blockCopy.bullets.map((line) => (
+        <Text key={line} style={styles.body}>
+          {'\u2022  '}
+          {line}
+        </Text>
+      ))}
+      <Text style={styles.contentHeading}>{blockCopy.options}</Text>
+      <Card>
+        <Text style={styles.contentQuestion}>{blockCopy.who}</Text>
+        <Input
+          value={query}
+          onChangeText={setQuery}
+          placeholder={blockCopy.placeholder}
+          icon="search"
+          autoCapitalize="none"
+          autoCorrect={false}
         />
-        {state === 'loading' ? (
-          <StateView type="loading" message="Loading…" />
-        ) : state === 'error' ? (
-          <>
-            <StateView type="error" message="We could not load this list." />
-            <Button label="Try again" onPress={() => void load()} />
-          </>
-        ) : people.length ? (
-          <Card padded={false}>
-            {people.map((user, index) => (
-              <View key={user.id}>
-                {index > 0 && <Divider />}
-                <UserListItem
-                  user={user}
-                  actionLabel={kind === 'blocked' ? 'Unblock' : 'Unmute'}
-                  onAction={() => void undo(user)}
-                />
-              </View>
-            ))}
-          </Card>
-        ) : (
-          <StateView
-            type="empty"
-            message={
-              kind === 'blocked' ? 'You have not blocked anyone.' : 'You have not muted anyone.'
-            }
+        {candidates(results).length > 0 && (
+          <PeopleList
+            people={candidates(results)}
+            actionLabel="Block"
+            onAction={(user) => void block(user)}
           />
         )}
-      </Screen>
+        <Text style={styles.contentQuestion}>{blockCopy.recent}</Text>
+        {candidates(recent).length ? (
+          <PeopleList
+            people={candidates(recent)}
+            actionLabel="Block"
+            onAction={(user) => void block(user)}
+          />
+        ) : (
+          <Text style={styles.pageSubtitle}>{blockCopy.recentHelp}</Text>
+        )}
+      </Card>
+      <Text style={styles.contentHeading}>{blockCopy.changeMindTitle}</Text>
+      <Text style={styles.body}>{blockCopy.changeMind}</Text>
+      <Text style={styles.contentHeading}>{blockCopy.blockListTitle}</Text>
+      <Text style={styles.pageSubtitle}>{blockCopy.blockListNote}</Text>
+      {blocked.length ? (
+        <PeopleList
+          people={blocked}
+          actionLabel="Unblock"
+          onAction={(user) => void unblock(user)}
+        />
+      ) : (
+        <Card>
+          <Text style={styles.contentQuestion}>{blockCopy.blockEmptyTitle}</Text>
+          {blockCopy.blockEmpty.map((line) => (
+            <Text key={line} style={styles.body}>
+              {line}
+            </Text>
+          ))}
+        </Card>
+      )}
+    </>
+  );
+
+  const muteSection = (
+    <>
+      <Text style={styles.contentHeading}>{blockCopy.muteListTitle}</Text>
+      <Text style={styles.pageSubtitle}>{blockCopy.muteListNote}</Text>
+      {muted.length ? (
+        <PeopleList people={muted} actionLabel="Unmute" onAction={(user) => void unmute(user)} />
+      ) : (
+        <Card>
+          <Text style={styles.contentQuestion}>{blockCopy.muteEmptyTitle}</Text>
+          <Text style={styles.body}>{blockCopy.muteEmpty}</Text>
+        </Card>
+      )}
+    </>
+  );
+
+  return (
+    <Shell title={titles[kind === 'blocked' ? 'block-user' : 'mute-report']} actions={false}>
+      <Keyboard>
+        <Screen>
+          {state === 'loading' ? (
+            <StateView type="loading" message="Loading…" />
+          ) : state === 'error' ? (
+            <>
+              <StateView type="error" message="We could not load this list." />
+              <Button label="Try again" onPress={() => void load()} />
+            </>
+          ) : (
+            <>
+              {kind === 'blocked' && blockSection}
+              {muteSection}
+              <Text style={styles.contentHeading}>{blockCopy.helpTitle}</Text>
+              <Text style={styles.body}>{blockCopy.help}</Text>
+              <Text style={styles.contentQuestion}>{blockCopy.closing}</Text>
+            </>
+          )}
+        </Screen>
+      </Keyboard>
     </Shell>
   );
 }
@@ -2779,15 +2966,25 @@ function Menu() {
             ['trending', 'Trending moods', '/threads-list'],
             ['bookmark', 'Favourites', '/favourites'],
             ['bell', 'Notifications', '/notifications'],
-            ['group', 'Invite friends', '/invite'],
           ]}
         />
         <MenuGroup
           rows={[
-            ['settings', 'Settings', '/settings'],
-            ['help', 'Help', '/help'],
-            ['info', 'About us', '/about-us'],
-            ['shield', 'Community guidelines', '/community-guidelines'],
+            ['person', 'Profile Settings', '/profile-setting'],
+            ['bell', 'Notification Settings', '/notification-setting'],
+            ['shield', 'Privacy Settings', '/privacy-setting'],
+            ['group', 'Block User', '/block-user'],
+            ['mood', 'Mute & Report', '/mute-report'],
+            ['group', 'Invite', '/invite'],
+            ['lock', 'Change Password', '/change-password'],
+            ['help', 'Help and FAQ', '/help'],
+            ['info', 'About Us', '/about-us'],
+            ['mail', 'Contact Us', '/contact'],
+            ['info', 'Cookies', '/cookies'],
+            ['info', 'Terms & Conditions', '/terms-conditions'],
+            ['shield', 'Policy & Data Use', '/policy'],
+            ['shield', 'Community Guidelines', '/community-guidelines'],
+            ['shield', 'CSAE Policy', '/csae'],
           ]}
         />
         <Card padded={false}>
@@ -3316,7 +3513,7 @@ export default function DynamicScreen() {
     ['profile-setting', 'notification-setting', 'privacy-setting', 'delete-account'].includes(route)
   )
     return <SettingsPage route={route} />;
-  return <Info title={titles[route] || 'Moodflik'} />;
+  return <Info route={route} title={titles[route] || 'Moodflik'} />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -3324,6 +3521,10 @@ export default function DynamicScreen() {
 /* ------------------------------------------------------------------ */
 
 const styles = StyleSheet.create({
+  centeredTitle: { ...typography.h1, color: colors.darkText, textAlign: 'center' },
+  contentHeading: { ...typography.h2, color: colors.darkText, marginTop: spacing.md },
+  contentQuestion: { fontWeight: '700', color: colors.darkText },
+  helpVideo: { width: '100%', aspectRatio: 16 / 9, borderRadius: radius.sm },
   inviteTitle: { fontSize: 20, fontWeight: '700', color: colors.text, textAlign: 'center' },
   inviteBody: { fontSize: 15, lineHeight: 23, color: colors.text },
   questionCard: {

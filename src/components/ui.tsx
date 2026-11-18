@@ -23,6 +23,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { SymbolView, type SymbolViewProps } from 'expo-symbols';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, layout, radius, spacing, typography } from '@/constants/theme';
 import { RAIL_WIDTH, useResponsive } from '@/hooks/use-responsive';
@@ -1554,6 +1555,7 @@ export function PostCard({
         {post.media?.[0] && post.media[0].type === 'image' && (
           <Image source={{ uri: post.media[0].uri }} style={styles.bubbleMedia} />
         )}
+        {post.media?.[0] && post.media[0].type === 'video' && <PostVideo uri={post.media[0].uri} />}
       </View>
 
       {whyOpen && (
@@ -1888,6 +1890,19 @@ export function ConversationItem({
         </View>
       </View>
     </Pressable>
+  );
+}
+
+function PostVideo({ uri }: { uri: string }) {
+  const player = useVideoPlayer(uri);
+  return (
+    <VideoView
+      player={player}
+      style={styles.bubbleMedia}
+      contentFit="contain"
+      nativeControls
+      accessibilityLabel="Post video"
+    />
   );
 }
 
